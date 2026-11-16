@@ -1,5 +1,5 @@
 import { getStore } from "@netlify/blobs";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 const THEMES = ["cream","blush","sage","lilac","midnight","sunset"];
 const EDIT_WINDOW_MS = 30 * 60 * 1000; // people can edit for 30 minutes
@@ -8,6 +8,25 @@ const json = (o, s = 200) =>
   new Response(JSON.stringify(o), { status: s, headers: { "Content-Type": "application/json" } });
 const hash = (t) => createHash("sha256").update(String(t)).digest("hex");
 const last = new Map();
+const fails = new Map();
+
+// Admin check. The password lives in Netlify (environment variable ADMIN_PASSWORD), never in the code.
+const adminCheck = (pw, ip) => {
+  const secret = process.env.ADMIN_PASSWORD;
+  if (!secret) return "unset";
+  const f = fails.get(ip) || { n: 0, until: 0 };
+  if (Date.now() < f.until) return "locked";
+  const h = (v) => createHash("sha256").update(String(v ?? "")).digest();
+  if (timingSafeEqual(h(pw), h(secret))) { fails.delete(ip); return "ok"; }
+  f.n++;
+  if (f.n >= 5) { f.n = 0; f.until = Date.now() + 10 * 60 * 1000; }
+  fails.set(ip, f);
+  return "bad";
+};
+const adminError = (r) =>
+  r === "unset" ? json({ error: "Admin password isn't set up in Netlify yet." }, 503)
+  : r === "locked" ? json({ error: "Too many tries. Wait 10 minutes." }, 429)
+  : json({ error: "Wrong password." }, 401);
 
 const okHost = (u, re) => { try { const x = new URL(u); return x.protocol === "https:" && re.test(x.hostname); } catch { return false; } };
 const songFields = (d) => {
@@ -53,6 +72,18 @@ export default async (req, context) => {
   }
 
   const ip = context.ip || "x";
+
+  if (path === "/api/admin" || path === "/api/delete") {
+    const r = adminCheck(d.password, ip);
+    if (r !== "ok") return adminError(r);
+    if (path === "/api/delete") {
+      const i = notes.findIndex((x) => x.id === d.id);
+      if (i >= 0) notes.splice(i, 1);
+      await store.setJSON("notes", notes);
+    }
+    return json({ ok: true });
+  }
+
   const now = Date.now();
   if (now - (last.get(ip) || 0) < 10000)
     return json({ error: "Slow down, wait a few seconds." }, 429);
@@ -61,7 +92,7 @@ export default async (req, context) => {
   if (!text) return json({ error: "Note can't be empty." }, 400);
 
   const token = randomUUID();
-  const id = notes.length ? notes[notes.length - 1].id + 1 : 1;
+  const id = notes.reduce((m, x) => Math.max(m, x.id), 0) + 1;
   notes.push({
     id,
     text,
@@ -77,4 +108,4 @@ export default async (req, context) => {
   return json({ ok: true, id, token });
 };
 
-export const config = { path: ["/api/notes", "/api/like", "/api/edit"] };
+export const config = { path: ["/api/notes", "/api/like", "/api/edit", "/api/admin", "/api/delete"] };
