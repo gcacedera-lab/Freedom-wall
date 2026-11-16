@@ -28,8 +28,8 @@ h1{margin:0;font-size:2rem;font-weight:800;letter-spacing:-.02em;line-height:1}
 .live{display:flex;align-items:center;gap:8px;background:#e8f8ef;border:1px solid #bfe8d0;color:#2f7d55;border-radius:999px;padding:7px 14px;font-size:.9rem}
 .live i{width:8px;height:8px;border-radius:50%;background:#3dbb83}
 #count{color:#8a8379;font-size:.95rem}
-main{border-top:1px solid #ece7df;padding:36px 32px 40px;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:34px 28px;align-items:start;background-image:radial-gradient(#ddd6cb 1px,transparent 1px);background-size:26px 26px}
-.empty{grid-column:1/-1;text-align:center;color:#8a8379;padding:40px 0}
+main{border-top:1px solid #ece7df;padding:36px 32px 40px;display:flex;gap:28px;align-items:flex-start;background-image:radial-gradient(#ddd6cb 1px,transparent 1px);background-size:26px 26px}
+.empty{flex:1;text-align:center;color:#8a8379;padding:40px 0}
 .note{position:relative;background:var(--bg);color:var(--ink);border:1.5px solid var(--bd);border-radius:28px;padding:26px;transform:rotate(var(--tilt));box-shadow:0 8px 20px #0000000d}
 .t-cream{--bg:#fffbe6;--bd:#f3e7a6;--song:#faf1cc;--ink:#2b2418;--tape:#f5e58e}
 .t-blush{--bg:#fff0f3;--bd:#f6cdd7;--song:#fbdde4;--ink:#2e2025;--tape:#f7c6d1}
@@ -118,7 +118,8 @@ header .mini,header .post{flex:1 1 0;width:auto;padding:13px 10px;text-align:cen
 .filters{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:8px 16px 16px}
 .filters::-webkit-scrollbar{display:none}
 .filters>*{flex:none;white-space:nowrap}
-main{padding:26px 14px 30px;gap:30px 0}
+main{padding:26px 14px 30px;gap:14px}
+.col{gap:30px}
 .note{padding:22px}
 .heart{padding:10px 8px}
 .editbtn,.delbtn{padding:8px 16px;font-size:.85rem}
@@ -128,6 +129,7 @@ dialog textarea{min-height:120px;resize:none}
 #bar{bottom:calc(10px + env(safe-area-inset-bottom,0px))}
 footer{padding:28px 16px 14px}
 }
+.col{flex:1;min-width:0;display:flex;flex-direction:column;gap:34px}
 </style></head><body>
 <div class="app">
 <header>
@@ -196,7 +198,7 @@ function embedFor(link){
   return null;
 }
 const au=new Audio();au.preload="none";
-let queue=[],qi=-1,playingId=null,lastList=[];
+let queue=[],qi=-1,playingId=null,lastList=[],cardEls=[],colN=0;
 function sync(){
   const on=!au.paused&&playingId!=null;
   $("bplay").textContent=on?"\u23F8":"\u25B6";
@@ -259,13 +261,37 @@ function toggle(v,n,player){
 
 const HEART='<svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>';
 
+function colCount(){
+  const wall=$("wall"),cs=getComputedStyle(wall),gap=parseFloat(cs.columnGap)||28;
+  const inner=wall.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+  return Math.max(1,Math.floor((inner+gap)/(300+gap)));
+}
+function layout(cards){
+  const wall=$("wall");
+  wall.replaceChildren();
+  colN=colCount();
+  const cols=[];
+  for(let i=0;i<colN;i++){const c=el("div","col");wall.append(c);cols.push(c)}
+  for(const card of cards){
+    let m=cols[0];
+    for(const c of cols)if(c.offsetHeight<m.offsetHeight)m=c;
+    m.append(card);
+  }
+}
+let rt=null;
+addEventListener("resize",()=>{
+  clearTimeout(rt);
+  rt=setTimeout(()=>{if(cardEls.length&&colCount()!==colN&&!document.querySelector(".player iframe"))layout(cardEls)},150);
+});
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>{if(cardEls.length&&!document.querySelector(".player iframe"))layout(cardEls)});
+
 function render(){
   const q=query.toLowerCase();
   const list=notes.filter(n=>(filter==="all"||themeOf(n)===filter)&&
     (!q||[n.text,n.song,n.artist,n.name].join(" ").toLowerCase().includes(q)));
   lastList=list;
   $("count").textContent=list.length+(list.length===1?" note":" notes");
-  const wall=$("wall");wall.replaceChildren();
+  const wall=$("wall");wall.replaceChildren();cardEls=[];
   if(!list.length){wall.append(el("div","empty",notes.length?"No notes match your search.":"No notes yet. Be the first to post!"));return}
   for(const n of list){
     const t=themeOf(n);
@@ -302,9 +328,11 @@ function render(){
       c.textContent=n.likes;hb.classList.toggle("on",!was);
       try{await fetch("/api/like",{method:"POST",body:JSON.stringify({id:n.id,unlike:was})})}catch(e){}
     };
-    foot.append(hb);card.append(foot);wall.append(card);
+    foot.append(hb);card.append(foot);cardEls.push(card);
   }
+  layout(cardEls);
 }
+
 
 function buildFilters(){
   const box=$("filters");
@@ -452,3 +480,4 @@ if(adminPw)$("adminlink").textContent="Admin: log out";
 
 buildFilters();buildThemePicker();load();
 </script></body></html>
+
