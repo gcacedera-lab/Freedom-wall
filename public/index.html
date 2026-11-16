@@ -88,6 +88,8 @@ textarea{min-height:100px;resize:vertical}
 .vinyl i.art{background-size:cover;background-position:center;width:36px;height:36px}
 .vinyl i.art::after{display:none}
 .full{font-size:.8rem;color:inherit;opacity:.7}
+.editbtn{background:none;border:1px solid currentColor;border-radius:999px;color:inherit;font:inherit;font-size:.8rem;padding:4px 14px;cursor:pointer;opacity:.75}
+#f.editing input[name=name],#f.editing #themes{display:none}
 </style></head><body>
 <div class="app">
 <header>
@@ -101,7 +103,7 @@ textarea{min-height:100px;resize:vertical}
 </header>
 <div class="filters" id="filters"></div>
 <main id="wall"><div class="empty">Loading notes...</div></main>
-<footer>"Where words fade, music speaks."<br><small>made by: calyx</small></footer>
+<footer>"Where words fade, music speaks."</footer>
 </div>
 
 <dialog id="dlg">
@@ -130,6 +132,10 @@ let notes=[],filter="all",query="",liked=new Set();
 try{liked=new Set(JSON.parse(localStorage.getItem("ev_liked")||"[]"))}catch(e){}
 const $=id=>document.getElementById(id);
 const saveLiked=()=>{try{localStorage.setItem("ev_liked",JSON.stringify([...liked]))}catch(e){}};
+let mine={},editing=null;
+try{mine=JSON.parse(localStorage.getItem("ev_mine")||"{}")||{}}catch(e){}
+const saveMine=()=>{try{localStorage.setItem("ev_mine",JSON.stringify(mine))}catch(e){}};
+const canEdit=n=>!!mine[n.id]&&Date.now()/1000-n.time<1800;
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
 const themeOf=n=>THEMES[n.theme]?n.theme:(LEGACY[n.color]||"cream");
 function ago(t){const s=Math.floor(Date.now()/1000-t);
@@ -201,6 +207,7 @@ function render(){
     }
     const foot=el("div","foot");
     foot.append(el("span","tag","#"+t.toUpperCase()));
+    if(canEdit(n)){const eb=el("button","editbtn","Edit");eb.type="button";eb.onclick=()=>openEdit(n);foot.append(eb)}
     const hb=el("button","heart"+(liked.has(n.id)?" on":""));
     hb.innerHTML=HEART;
     const c=el("span",null,n.likes);hb.append(c);
@@ -252,12 +259,22 @@ $("open").onclick=()=>$("dlg").showModal();
 $("cancel").onclick=()=>$("dlg").close();
 $("f").onsubmit=async e=>{
   e.preventDefault();
-  const b=$("send");b.disabled=true;$("msg").textContent="Posting...";
+  const b=$("send");b.disabled=true;$("msg").textContent=editing?"Saving...":"Posting...";
   try{
-    const r=await fetch("/api/notes",{method:"POST",body:JSON.stringify(Object.fromEntries(new FormData($("f"))))});
+    const body=Object.fromEntries(new FormData($("f")));
+    let url="/api/notes";
+    if(editing){url="/api/edit";body.id=editing.id;body.token=(mine[editing.id]||{}).token}
+    const r=await fetch(url,{method:"POST",body:JSON.stringify(body)});
     const j=await r.json();
-    if(!r.ok){$("msg").textContent=j.error||"Something went wrong."}
-    else{$("f").reset();clearPick();$("msg").textContent="";$("dlg").close();await load()}
+    if(!r.ok){$("msg").textContent=j.error||"Something went wrong.";if(editing&&r.status===403)await load()}
+    else{
+      if(!editing&&j.id&&j.token){mine[j.id]={token:j.token};saveMine()}
+      const was=editing;
+      $("dlg").close();
+      if(!was){$("f").reset();clearPick()}
+      $("msg").textContent="";
+      await load();
+    }
   }catch(err){$("msg").textContent="Network error. Try again."}
   b.disabled=false;
 };
@@ -297,6 +314,32 @@ $("songq").oninput=e=>{
     }catch(err){box.replaceChildren(el("div","none","Could not search. Check your connection."))}
   },400);
 };
+
+function openEdit(n){
+  if(!canEdit(n)){load();return}
+  editing=n;
+  const f=$("f");f.classList.add("editing");
+  clearPick();
+  f.elements.text.value=n.text;
+  if(n.song||n.link){
+    f.elements.song.value=n.song||"";f.elements.artist.value=n.artist||"";
+    f.elements.preview.value=n.preview||"";f.elements.art.value=n.art||"";f.elements.link.value=n.link||"";
+    const p=$("picked");p.hidden=false;
+    p.textContent="\u{1F3B5} "+(n.song||"Song")+(n.artist?" \u2013 "+n.artist:"")+"   \u2715";
+    $("songq").hidden=true;
+  }
+  $("dlg").querySelector("h2").textContent="Edit your note";
+  $("send").textContent="Save changes";
+  $("msg").textContent="You can edit for 30 minutes after posting.";
+  $("dlg").showModal();
+}
+$("dlg").addEventListener("close",()=>{
+  if(!editing)return;
+  editing=null;
+  const f=$("f");f.classList.remove("editing");f.reset();clearPick();
+  $("dlg").querySelector("h2").textContent="Post to the Wall";
+  $("send").textContent="Post note";$("msg").textContent="";
+});
 
 buildFilters();buildThemePicker();load();
 </script></body></html>
