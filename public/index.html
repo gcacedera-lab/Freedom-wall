@@ -90,6 +90,17 @@ textarea{min-height:100px;resize:vertical}
 .full{font-size:.8rem;color:inherit;opacity:.7}
 .editbtn{background:none;border:1px solid currentColor;border-radius:999px;color:inherit;font:inherit;font-size:.8rem;padding:4px 14px;cursor:pointer;opacity:.75}
 #f.editing input[name=name],#f.editing #themes{display:none}
+.mini{background:#fff;color:#1d1a16;border:1px solid #e8e3da;border-radius:999px;padding:15px 22px;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}
+#bar{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:50;width:min(560px,calc(100% - 20px));display:flex;align-items:center;gap:10px;background:#1d1a16;color:#fff;border-radius:999px;padding:8px 10px 8px 8px;box-shadow:0 8px 28px #0006}
+#bar[hidden]{display:none}
+#barart{width:44px;height:44px;border-radius:50%;background:#333 center/cover;flex:none}
+.binfo{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.binfo b,.binfo span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.binfo span{font-size:.8rem;opacity:.7}
+#bar button{background:none;border:0;color:#fff;font-size:1.25rem;cursor:pointer;padding:6px 8px}
+body.hasbar{padding-bottom:84px}
+.delbtn{background:none;border:1px solid #c0392b;border-radius:999px;color:#c0392b;font:inherit;font-size:.8rem;padding:4px 14px;cursor:pointer}
+footer a{color:inherit;opacity:.5;font-size:.8rem;font-style:normal}
 </style></head><body>
 <div class="app">
 <header>
@@ -99,11 +110,13 @@ textarea{min-height:100px;resize:vertical}
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
     <input id="q" placeholder="Search messages, songs, artists, or names...">
   </label>
+  <button class="mini" id="playall">▶ Play music</button>
   <button class="post" id="open">+ Post to Wall</button>
 </header>
 <div class="filters" id="filters"></div>
 <main id="wall"><div class="empty">Loading notes...</div></main>
-<footer>"Where words fade, music speaks."</footer>
+<footer>"Where words fade, music speaks."<br><a href="#" id="adminlink">Admin</a></footer>
+<div id="bar" hidden><div id="barart"></div><div class="binfo"><b id="bartitle"></b><span id="barartist"></span></div><button id="bprev" aria-label="Previous">⏮</button><button id="bplay" aria-label="Play or pause">⏸</button><button id="bnext" aria-label="Next">⏭</button><button id="bclose" aria-label="Close player">✕</button></div>
 </div>
 
 <dialog id="dlg">
@@ -132,6 +145,8 @@ let notes=[],filter="all",query="",liked=new Set();
 try{liked=new Set(JSON.parse(localStorage.getItem("ev_liked")||"[]"))}catch(e){}
 const $=id=>document.getElementById(id);
 const saveLiked=()=>{try{localStorage.setItem("ev_liked",JSON.stringify([...liked]))}catch(e){}};
+let adminPw="";
+try{adminPw=localStorage.getItem("ev_admin")||""}catch(e){}
 let mine={},editing=null;
 try{mine=JSON.parse(localStorage.getItem("ev_mine")||"{}")||{}}catch(e){}
 const saveMine=()=>{try{localStorage.setItem("ev_mine",JSON.stringify(mine))}catch(e){}};
@@ -153,23 +168,62 @@ function embedFor(link){
   }catch(e){}
   return null;
 }
-let audio=null;
+const au=new Audio();au.preload="none";
+let queue=[],qi=-1,playingId=null,lastList=[];
+function sync(){
+  const on=!au.paused&&playingId!=null;
+  $("bplay").textContent=on?"\u23F8":"\u25B6";
+  $("playall").textContent=on?"\u23F8 Pause music":"\u25B6 Play music";
+  document.querySelectorAll(".vinyl[data-id]").forEach(v=>v.classList.toggle("on",on&&+v.dataset.id===playingId));
+}
+function hideBar(){$("bar").hidden=true;document.body.classList.remove("hasbar")}
 function stopAll(except){
-  if(audio){audio.pause();audio=null}
+  au.pause();playingId=null;hideBar();sync();
   document.querySelectorAll(".vinyl.on").forEach(b=>{
     if(b!==except){b.classList.remove("on");b.closest("article").querySelector(".player").replaceChildren()}
   });
 }
+function showBar(n){
+  const a=$("barart");a.style.backgroundImage=n.art?"url("+JSON.stringify(n.art)+")":"none";
+  $("bartitle").textContent=n.song||"Untitled song";
+  $("barartist").textContent=n.artist||"";
+  $("bar").hidden=false;document.body.classList.add("hasbar");
+}
+function playAt(i){
+  if(!queue.length)return;
+  qi=(i+queue.length)%queue.length;
+  const n=queue[qi];
+  document.querySelectorAll(".player").forEach(p=>p.replaceChildren());
+  document.querySelectorAll(".vinyl.on:not([data-id])").forEach(v=>v.classList.remove("on"));
+  playingId=n.id;au.src=n.preview;
+  const pr=au.play();if(pr&&pr.catch)pr.catch(()=>{});
+  showBar(n);sync();
+}
+function startQueue(startId){
+  queue=lastList.filter(n=>n.preview);
+  if(!queue.length){alert("No songs with audio on the wall yet.");return}
+  let i=queue.findIndex(n=>n.id===startId);if(i<0)i=0;
+  playAt(i);
+}
+au.onplay=au.onpause=sync;
+au.onended=()=>{if(queue.length>1)playAt(qi+1);else{playingId=null;sync()}};
+au.onerror=()=>{if(queue.length>1)playAt(qi+1)};
+$("bplay").onclick=()=>{if(au.paused){const p=au.play();if(p&&p.catch)p.catch(()=>{})}else au.pause()};
+$("bnext").onclick=()=>playAt(qi+1);
+$("bprev").onclick=()=>playAt(qi-1);
+$("bclose").onclick=()=>stopAll();
+$("playall").onclick=()=>{
+  if(!au.paused&&playingId!=null){au.pause();return}
+  if(playingId!=null&&au.src){const p=au.play();if(p&&p.catch)p.catch(()=>{});return}
+  startQueue();
+};
 function toggle(v,n,player){
+  if(n.preview){
+    if(playingId===n.id&&!au.paused){au.pause();return}
+    startQueue(n.id);return;
+  }
   if(v.classList.contains("on")){stopAll();return}
   stopAll(v);
-  if(n.preview){
-    v.classList.add("on");
-    audio=new Audio(n.preview);
-    audio.onended=()=>{v.classList.remove("on");audio=null};
-    audio.play().catch(()=>v.classList.remove("on"));
-    return;
-  }
   const e=n.link&&embedFor(n.link);
   if(e){v.classList.add("on");const fr=document.createElement("iframe");fr.src=e.src;fr.height=e.h;fr.allow="autoplay; encrypted-media";player.replaceChildren(fr);return}
   if(n.link){window.open(n.link,"_blank","noopener");return}
@@ -182,6 +236,7 @@ function render(){
   const q=query.toLowerCase();
   const list=notes.filter(n=>(filter==="all"||themeOf(n)===filter)&&
     (!q||[n.text,n.song,n.artist,n.name].join(" ").toLowerCase().includes(q)));
+  lastList=list;
   $("count").textContent=list.length+(list.length===1?" note":" notes");
   const wall=$("wall");wall.replaceChildren();
   if(!list.length){wall.append(el("div","empty",notes.length?"No notes match your search.":"No notes yet. Be the first to post!"));return}
@@ -194,7 +249,7 @@ function render(){
     card.append(top,el("p","text","\u201C"+n.text+"\u201D"));
     if(n.song||n.link){
       const s=el("div","song"),v=el("button","vinyl");
-      v.setAttribute("aria-label","Play song");const vi=el("i");if(n.art){vi.className="art";vi.style.backgroundImage="url("+JSON.stringify(n.art)+")"}v.append(vi);
+      v.setAttribute("aria-label","Play song");if(n.preview){v.dataset.id=n.id;if(playingId===n.id&&!au.paused)v.classList.add("on")}const vi=el("i");if(n.art){vi.className="art";vi.style.backgroundImage="url("+JSON.stringify(n.art)+")"}v.append(vi);
       const info=el("div","info");
       info.append(el("b",null,n.song||"Untitled song"));
       if(n.artist)info.append(el("span","artist",n.artist));
@@ -207,6 +262,7 @@ function render(){
     }
     const foot=el("div","foot");
     foot.append(el("span","tag","#"+t.toUpperCase()));
+    if(adminPw){const db=el("button","delbtn","Delete");db.type="button";db.onclick=()=>delNote(n);foot.append(db)}
     if(canEdit(n)){const eb=el("button","editbtn","Edit");eb.type="button";eb.onclick=()=>openEdit(n);foot.append(eb)}
     const hb=el("button","heart"+(liked.has(n.id)?" on":""));
     hb.innerHTML=HEART;
@@ -341,5 +397,32 @@ $("dlg").addEventListener("close",()=>{
   $("send").textContent="Post note";$("msg").textContent="";
 });
 
+async function delNote(n){
+  if(!confirm("Delete this note for everyone?"))return;
+  try{
+    const r=await fetch("/api/delete",{method:"POST",body:JSON.stringify({id:n.id,password:adminPw})});
+    if(!r.ok){const j=await r.json().catch(()=>({}));alert(j.error||"Could not delete.");if(r.status===401)setAdmin("");return}
+    await load();
+  }catch(e){alert("Network error. Try again.")}
+}
+function setAdmin(pw){
+  adminPw=pw;
+  try{if(pw)localStorage.setItem("ev_admin",pw);else localStorage.removeItem("ev_admin")}catch(e){}
+  $("adminlink").textContent=pw?"Admin: log out":"Admin";
+  render();
+}
+$("adminlink").onclick=async e=>{
+  e.preventDefault();
+  if(adminPw){setAdmin("");return}
+  const pw=prompt("Admin password");
+  if(!pw)return;
+  try{
+    const r=await fetch("/api/admin",{method:"POST",body:JSON.stringify({password:pw})});
+    if(r.ok)setAdmin(pw);else{const j=await r.json().catch(()=>({}));alert(j.error||"Wrong password.")}
+  }catch(err){alert("Network error. Try again.")}
+};
+if(adminPw)$("adminlink").textContent="Admin: log out";
+
 buildFilters();buildThemePicker();load();
 </script></body></html>
+
